@@ -1,0 +1,80 @@
+# Maintainer: gzmorell <gzmorell at gmail dot com>
+
+# All my PKGBUILDs are managed at https://github.com/gzmorell/PKGBUILDs where
+# you also find the URL of a binary repository.
+
+_qt_module=qtserialport
+pkgname="qt4-serialport"
+pkgver="4.8.30"
+pkgrel=1
+arch=('any')
+pkgdesc="Provides access to hardware and virtual serial ports (qt4)"
+depends=('qt4')
+makedepends=('gcc' 'pkg-config')
+options=('!strip' '!buildflags')
+groups=('qt4')
+license=('LGPL3' 'FDL' 'custom')
+url='https://github.com/gzmorell/qtserialport.git'
+_pkgfqn="${_qt_module}"
+source=("git+$url#branch=qt4-dev")
+sha256sums=('SKIP')
+
+_config="CONFIG+=shared"
+_arch="x86_64"
+
+prepare() {
+  cd "${srcdir}/${_pkgfqn}"
+  # Don't build examples or tests.
+  sed -i 's/ examples tests//' qtserialport.pro
+}
+
+build() {
+  cd "${srcdir}/${_pkgfqn}"
+
+  msg2 "Building ${_config##*=} version for ${_arch}"
+  mkdir -p build-${_arch}-${_config##*=} && pushd build-${_arch}-${_config##*=}
+  qmake-qt4 ../${_qt_module}.pro ${_config}
+  make
+  popd
+}
+
+package() {
+  cd "${srcdir}/${_pkgfqn}"
+
+  pushd build-${_arch}-${_config##*=}
+
+  make INSTALL_ROOT="$pkgdir" install
+
+  # use prl files from build directory since installed prl files seem to have incorrect QMAKE_PRL_LIBS_FOR_CMAKE
+  if [[ -d 'lib' ]]; then
+    pushd 'lib'
+    find -iname '*.static.prl' -exec cp --target-directory "${pkgdir}/usr/lib" --parents {} +
+    popd
+  fi
+  if [[ -d 'plugins' ]]; then
+    pushd 'plugins'
+    find -iname '*.static.prl' -exec cp --target-directory "${pkgdir}/usr/lib/qt/plugins" --parents {} +
+    popd
+  fi
+
+  # replace library path in *.prl files so it points to the installed location and not the build directory
+  find "${pkgdir}/usr/lib" \( -type f -name '*.prl' -o -name '*.pc' \) -exec sed -i -e "s:$PWD/lib:/usr/lib:g" {} \;
+
+  # remove prl files for debug version
+  if ! [[ $MINGW_W64_QT_DEBUG_BUILD ]]; then
+    for file in $(find "${pkgdir}/usr" -name '*d.prl' -o -name '*d.static.prl'); do
+        [ -f "${file%d*}${file##*d}" ] && rm "${file}";
+     done
+  fi
+
+  find "${pkgdir}/usr/lib" -maxdepth 1 -name '*.dll' -delete
+  [ "$NO_STATIC_EXECUTABLES" -a "${_config##*=}" = static -o "$NO_EXECUTABLES" ] && \
+      [[ -d "${pkgdir}/usr/lib/qt/bin/" ]] && \
+        find "${pkgdir}/usr/lib/qt/bin/" -exec strip --strip-all {} \;
+      find "${pkgdir}/usr/lib/" -iname "*.so.$pkgver" -exec strip --strip-unneeded {} \;
+      popd
+
+
+  # drop QMAKE_PRL_BUILD_DIR because reference the build dir
+  find "${pkgdir}/usr/lib" -type f -name '*.prl' -exec sed -i -e '/^QMAKE_PRL_BUILD_DIR/d' {} \;
+}
